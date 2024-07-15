@@ -33,6 +33,9 @@ unsigned long lastPublishTime = 0;
 unsigned long previousMillis = 0;
 const long interval = 10000; // 10 saniye
 
+// WiFi tarama sonuçları
+String wifiScanResult = "[]";
+
 // Fonksiyon prototipleri
 void loadSettings();
 void saveSettings();
@@ -40,6 +43,7 @@ void reconnectMQTT();
 void mqttCallback(char* topic, byte* payload, unsigned int length);
 void handlePublish();
 void publishStatus(int digitalInput1State, int digitalInput2State);
+void WiFiScanTask(void * parameter);
 
 static const char *root_ca PROGMEM = R"EOF(
 -----BEGIN CERTIFICATE-----
@@ -109,6 +113,17 @@ void setup() {
     client.setServer(mqttServer, mqttPort);
     client.setCallback(mqttCallback);
 
+    // WiFi tarama görevini başlat
+    xTaskCreatePinnedToCore(
+        WiFiScanTask,     // Görev işlevi
+        "WiFiScanTask",   // Görev adı
+        4096,             // Yığın boyutu
+        NULL,             // Görev parametresi
+        1,                // Öncelik
+        NULL,             // Görev tutucu
+        0                 // Çekirdek
+    );
+
     // Ana sayfa ve ayar sayfaları için sunucu yolları
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(SPIFFS, "/index.html", String(), false);
@@ -121,7 +136,6 @@ void setup() {
     server.on("/mqtt_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(SPIFFS, "/mqtt_settings.html", String(), false);
     });
-
 
     // Bootstrap ve jQuery dosyaları için sunucu yolları
     server.on("/css/sb-admin-2.min.css", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -143,8 +157,7 @@ void setup() {
     });
 
     server.on("/scan", HTTP_GET, [](AsyncWebServerRequest *request) {
-        String json = scanNetworks();
-        request->send(200, "application/json", json);
+        request->send(200, "application/json", wifiScanResult);
     });
 
     server.on("/connect", HTTP_POST, [](AsyncWebServerRequest *request) {
@@ -454,4 +467,12 @@ String scanNetworks() {
     }
     json += "]";
     return json;
+}
+
+void WiFiScanTask(void * parameter) {
+    while (true) {
+        wifiScanResult = scanNetworks();
+        Serial.println("WiFi scan completed");
+        delay(60000); // 1 dakika bekle
+    }
 }
