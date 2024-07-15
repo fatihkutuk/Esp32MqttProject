@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WiFi Settings</title>
+    <link href="/css/all.min.css" rel="stylesheet">
+    <link href="/css/sb-admin-2.min.css" rel="stylesheet">
+</head>
+<body id="page-top">
+    <div id="wrapper">
+        <ul class="navbar-nav bg-gradient-primary sidebar sidebar-dark accordion" id="accordionSidebar">
+            <a class="sidebar-brand d-flex align-items-center justify-content-center" href="/">
+                <div class="sidebar-brand-icon rotate-n-15">
+                    <i class="fas fa-laugh-wink"></i>
+                </div>
+                <div class="sidebar-brand-text mx-3">ESP32 Admin</div>
+            </a>
+            <hr class="sidebar-divider my-0">
+            <li class="nav-item">
+                <a class="nav-link" href="/">
+                    <i class="fas fa-fw fa-tachometer-alt"></i>
+                    <span>Dashboard</span>
+                </a>
+            </li>
+            <hr class="sidebar-divider">
+            <div class="sidebar-heading">Settings</div>
+            <li class="nav-item active">
+                <a class="nav-link" href="/wifi_settings">
+                    <i class="fas fa-fw fa-wifi"></i>
+                    <span>WiFi Settings</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" href="/mqtt_settings">
+                    <i class="fas fa-fw fa-server"></i>
+                    <span>MQTT Settings</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" href="/restart">
+                    <i class="fas fa-fw fa-redo"></i>
+                    <span>Restart</span>
+                </a>
+            </li>
+        </ul>
+        <div id="content-wrapper" class="d-flex flex-column">
+            <div id="content">
+                <nav class="navbar navbar-expand navbar-light bg-white topbar mb-4 static-top shadow">
+                    <ul class="navbar-nav ml-auto">
+                        <li class="nav-item dropdown no-arrow">
+                            <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                <span class="mr-2 d-none d-lg-inline text-gray-600 small">Admin</span>
+                                <img class="img-profile rounded-circle" src="https://via.placeholder.com/50">
+                            </a>
+                        </li>
+                    </ul>
+                </nav>
+                <div class="container-fluid">
+                    <h1 class="h3 mb-4 text-gray-800">WiFi Settings</h1>
+                    <form id="wifiForm">
+                        <div class="form-group">
+                            <label for="ssid">WiFi SSID</label>
+                            <input type="text" class="form-control" id="ssid" name="ssid" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="password">WiFi Password</label>
+                            <input type="password" class="form-control" id="password" name="password" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Save</button>
+                    </form>
+                    <div class="form-group">
+                        <label for="scan_results">Scan Results</label>
+                        <ul id="scan_results"></ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal" id="restartModal" tabindex="-1" role="dialog">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Restart Device</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <p>Settings saved. Please restart the device.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="restartDevice()">Restart Now</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="/js/jquery.min.js"></script>
+    <script src="/js/bootstrap.bundle.min.js"></script>
+    <script src="/js/sb-admin-2.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            $('#wifiForm').submit(function(e) {
+                e.preventDefault();
+                var form = $(this);
+                $.post('/save_wifi', form.serialize(), function(response) {
+                    $('#restartModal').modal('show');
+                });
+            });
+
+            function loadSettings() {
+                $.get('/get_wifi_settings', function(data) {
+                    $('#ssid').val(data.ssid);
+                    $('#password').val(data.password);
+                });
+            }
+
+            function scanNetworks() {
+                $.get('/scan', function(data) {
+                    var results = $('#scan_results');
+                    results.empty();
+                    data.forEach(function(network) {
+                        results.append('<li>' + network.ssid + ' (' + network.rssi + ' dBm)</li>');
+                    });
+                });
+            }
+
+            loadSettings();
+            scanNetworks();
+        });
+
+        function restartDevice() {
+            $.get('/confirm_restart', function(response) {
+                alert(response);
+                window.location.reload();
+            });
+        }
+    </script>
+</body>
+</html>

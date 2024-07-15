@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Admin Dashboard</title>
+    <link href="/css/all.min.css" rel="stylesheet">
+    <link href="/css/sb-admin-2.min.css" rel="stylesheet">
+</head>
+<body id="page-top">
+    <div id="wrapper">
+        <ul class="navbar-nav bg-gradient-primary sidebar sidebar-dark accordion" id="accordionSidebar">
+            <a class="sidebar-brand d-flex align-items-center justify-content-center" href="/">
+                <div class="sidebar-brand-icon rotate-n-15">
+                    <i class="fas fa-laugh-wink"></i>
+                </div>
+                <div class="sidebar-brand-text mx-3">ESP32 Admin</div>
+            </a>
+            <hr class="sidebar-divider my-0">
+            <li class="nav-item active">
+                <a class="nav-link" href="/">
+                    <i class="fas fa-fw fa-tachometer-alt"></i>
+                    <span>Dashboard</span>
+                </a>
+            </li>
+            <hr class="sidebar-divider">
+            <div class="sidebar-heading">Settings</div>
+            <li class="nav-item">
+                <a class="nav-link" href="/wifi_settings">
+                    <i class="fas fa-fw fa-wifi"></i>
+                    <span>WiFi Settings</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" href="/mqtt_settings">
+                    <i class="fas fa-fw fa-server"></i>
+                    <span>MQTT Settings</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" href="/restart">
+                    <i class="fas fa-fw fa-redo"></i>
+                    <span>Restart</span>
+                </a>
+            </li>
+        </ul>
+        <div id="content-wrapper" class="d-flex flex-column">
+            <div id="content">
+                <nav class="navbar navbar-expand navbar-light bg-white topbar mb-4 static-top shadow">
+                    <ul class="navbar-nav ml-auto">
+                        <li class="nav-item dropdown no-arrow">
+                            <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                <span class="mr-2 d-none d-lg-inline text-gray-600 small">Admin</span>
+                                <img class="img-profile rounded-circle" src="https://via.placeholder.com/50">
+                            </a>
+                        </li>
+                    </ul>
+                </nav>
+                <div class="container-fluid">
+                    <h1 class="h3 mb-4 text-gray-800">ESP32 Admin Dashboard</h1>
+                    <p>WiFi and MQTT connection status, IP addresses, and other settings will be shown here.</p>
+                    <div id="status">
+                        <h5>WiFi Status: <span id="wifi_status">Loading...</span></h5>
+                        <h5>MQTT Status: <span id="mqtt_status">Loading...</span></h5>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="/js/jquery.min.js"></script>
+    <script src="/js/bootstrap.bundle.min.js"></script>
+    <script src="/js/sb-admin-2.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            function updateStatus() {
+                $.get('/status', function(data) {
+                    $('#wifi_status').text(data.wifi_status);
+                    $('#mqtt_status').text(data.mqtt_status);
+                });
+            }
+
+            updateStatus();
+            setInterval(updateStatus, 5000);
+
+            $('.nav-link[href="/restart"]').click(function(e) {
+                e.preventDefault();
+                if (confirm('Are you sure you want to restart the device?')) {
+                    $.get('/restart', function(data) {
+                        alert(data);
+                    });
+                }
+            });
+        });
+    </script>
+</body>
+</html>
