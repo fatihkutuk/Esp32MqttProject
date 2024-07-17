@@ -131,6 +131,81 @@ Esp32MqttProject
 2. In the Arduino IDE, go to `Tools` and you should see an option to "ESP32 Sketch Data Upload".
 3. Click "ESP32 Sketch Data Upload" to upload the contents of the `data` folder to the ESP32 filesystem.
 
+
+# Key Points
+
+### Health
+ * Reset device after upload data or code with device reset button
+
+### Uploading SPIFFS Data
+
+1. Install the [Arduino ESP32 filesystem uploader](https://github.com/me-no-dev/arduino-esp32fs-plugin) by following these steps:
+   - Download the tool from the GitHub repository: [arduino-esp32fs-plugin](https://github.com/me-no-dev/arduino-esp32fs-plugin).
+   - Unzip the downloaded file.
+   - Copy the extracted `ESP32FS` folder into the `tools` directory of your Arduino IDE installation. The path should look like this:
+     ```
+     <Arduino Installation Folder>/tools/ESP32FS/tool/esp32fs.jar
+     ```
+   - Restart the Arduino IDE.
+
+2. In the Arduino IDE, go to `Tools` and you should see an option called "ESP32 Sketch Data Upload".
+
+3. Click "ESP32 Sketch Data Upload" to upload the contents of the `data` folder to the ESP32 filesystem. This step is essential to ensure that the web interface files (HTML, CSS, JS) are available on the ESP32.
+
+### Changeable Mqtt Functions
+
+- The `mqttCallback` function processes incoming MQTT messages. To control the LED on the device, you can send a JSON payload to the control topic:
+  - To turn the LED on: `{"deviceled": true}`
+  - To turn the LED off: `{"deviceled": false}`
+
+- You can customize the `mqttCallback` function to handle different JSON keys:
+
+  ```cpp
+  void mqttCallback(char* topic, byte* payload, unsigned int length) {
+      String message;
+      for (unsigned int i = 0; i < length; i++) {
+          message += (char)payload[i];
+      }
+      Serial.print("Message arrived [");
+      Serial.print(topic);
+      Serial.print("]: ");
+      Serial.println(message);
+
+      if (String(topic) == controlTopic) {
+          DynamicJsonDocument doc(1024);
+          DeserializationError error = deserializeJson(doc, message);
+          if (error) {
+              Serial.print(F("deserializeJson() failed: "));
+              Serial.println(error.f_str());
+              return;
+          }
+
+          if (doc.containsKey("deviceled")) {
+              int state = doc["deviceled"];
+              digitalWrite(digitalOutput, state ? HIGH : LOW);
+              Serial.print("Device LED set to: ");
+              Serial.println(state);
+          }
+          // Add your custom code here to handle other keys
+      }
+  }
+  ```
+
+- The `publishStatus` function sends status updates to the MQTT broker. This function publishes messages to the topic specified in the status topic field on the MQTT settings page:
+
+  ```cpp
+  void publishStatus(int digitalInput1State, int digitalInput2State) {
+      String payload = "{"digital_input_1":" + String(digitalInput1State) + ","digital_input_2":" + String(digitalInput2State) +
+                       ","local_ip":"" + localIP + "","ap_ip":"" + apIPStr + "","external_ip":"" + externalIP + ""}";
+      client.publish(statusTopic, payload.c_str());
+      Serial.println("Status published: " + payload);
+  }
+  ```
+
+- The `mqttCallback` function listens for messages on the control topic defined in the MQTT settings page.
+- The `publishStatus` function publishes messages to the status topic defined in the MQTT settings page.
+
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
