@@ -16,7 +16,7 @@ This repository contains the code for an ESP32 project that connects to an MQTT 
   - [Configuring Wi-Fi and MQTT](#configuring-wi-fi-and-mqtt)
   - [Uploading the Code](#uploading-the-code)
   - [Uploading SPIFFS Data](#uploading-spiffs-data)
-  - [Key Points](#KeyPoints)
+- [Key Points](#key-points)
 - [License](#license)
 - [Acknowledgements](#acknowledgements)
 
