@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WiFi Settings</title>
+    <title>Access Point Settings</title>
     <link href="/css/all.min.css" rel="stylesheet">
     <link href="/css/sb-admin-2.min.css" rel="stylesheet">
 </head>
@@ -25,13 +25,7 @@
             </li>
             <hr class="sidebar-divider">
             <div class="sidebar-heading">Settings</div>
-            <li class="nav-item active">
-                <a class="nav-link" href="/ap_settings">
-                    <i class="fas fa-fw fa-wifi"></i>
-                    <span>Access Point Settings</span>
-                </a>
-            </li>
-            <li class="nav-item active">
+            <li class="nav-item">
                 <a class="nav-link" href="/wifi_settings">
                     <i class="fas fa-fw fa-wifi"></i>
                     <span>WiFi Settings</span>
@@ -63,41 +57,38 @@
                     </ul>
                 </nav>
                 <div class="container-fluid">
-                    <h1 class="h3 mb-4 text-gray-800">WiFi Settings</h1>
-                    <form id="wifiForm">
+                    <h1 class="h3 mb-4 text-gray-800">Access Point Settings</h1>
+                    <form id="apForm">
                         <div class="form-group">
-                            <label for="ssid">WiFi SSID</label>
-                            <input type="text" class="form-control" id="ssid" name="ssid" required>
+                            <label for="ap_ssid">SSID:</label>
+                            <input type="text" class="form-control" id="ap_ssid" name="ap_ssid">
                         </div>
                         <div class="form-group">
-                            <label for="password">WiFi Password</label>
-                            <input type="password" class="form-control" id="password" name="password" required>
+                            <label for="ap_password">Password:</label>
+                            <input type="text" class="form-control" id="ap_password" name="ap_password">
+                        </div>
+                        <div class="form-group">
+                            <label for="ap_ip">IP Address:</label>
+                            <input type="text" class="form-control" id="ap_ip" name="ap_ip">
+                        </div>
+                        <div class="form-group">
+                            <label for="ap_gateway">Gateway:</label>
+                            <input type="text" class="form-control" id="ap_gateway" name="ap_gateway">
+                        </div>
+                        <div class="form-group">
+                            <label for="ap_subnet">Subnet:</label>
+                            <input type="text" class="form-control" id="ap_subnet" name="ap_subnet">
+                        </div>
+                        <div class="form-group">
+                            <label for="server_port">Server Port:</label>
+                            <input type="text" class="form-control" id="server_port" name="server_port">
+                        </div>
+                        <div class="form-group">
+                            <label for="ca_cert">CA Certificate (Base64):</label>
+                            <textarea class="form-control" id="ca_cert" name="ca_cert"></textarea>
                         </div>
                         <button type="submit" class="btn btn-primary">Save</button>
                     </form>
-                    <div class="form-group">
-                        <label for="scan_results">Scan Results</label>
-                        <ul id="scan_results"></ul>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    <div class="modal" id="restartModal" tabindex="-1" role="dialog">
-        <div class="modal-dialog" role="document">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Restart Device</h5>
-                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                        <span aria-hidden="true">&times;</span>
-                    </button>
-                </div>
-                <div class="modal-body">
-                    <p>Settings saved. Please restart the device.</p>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-primary" onclick="restartDevice()">Restart Now</button>
                 </div>
             </div>
         </div>
@@ -107,41 +98,27 @@
     <script src="/js/sb-admin-2.min.js"></script>
     <script>
         $(document).ready(function() {
-            $('#wifiForm').submit(function(e) {
+            $.get('/get_ap_settings', function(data) {
+                $('#ap_ssid').val(data.ap_ssid);
+                $('#ap_password').val(data.ap_password);
+                $('#ap_ip').val(data.ap_ip);
+                $('#ap_gateway').val(data.ap_gateway);
+                $('#ap_subnet').val(data.ap_subnet);
+                $('#server_port').val(data.server_port);
+                $('#ca_cert').val(atob(data.ca_cert)); // Sertifikayı Base64 decode et
+            });
+
+            $('#apForm').submit(function(e) {
                 e.preventDefault();
-                var form = $(this);
-                $.post('/save_wifi', form.serialize(), function(response) {
-                    $('#restartModal').modal('show');
+                let formData = $(this).serializeArray();
+                let caCert = $('#ca_cert').val();
+                let encodedCert = btoa(caCert); // Sertifikayı Base64 encode et
+                formData.push({name: 'ca_cert', value: encodedCert});
+                $.post('/save_ap_settings', $.param(formData), function(response) {
+                    alert(response);
                 });
             });
-
-            function loadSettings() {
-                $.get('/get_wifi_settings', function(data) {
-                    $('#ssid').val(data.ssid);
-                    $('#password').val(data.password);
-                });
-            }
-
-            function scanNetworks() {
-                $.get('/scan', function(data) {
-                    var results = $('#scan_results');
-                    results.empty();
-                    data.forEach(function(network) {
-                        results.append('<li>' + network.ssid + ' (' + network.rssi + ' dBm)</li>');
-                    });
-                });
-            }
-
-            loadSettings();
-            scanNetworks();
         });
-
-        function restartDevice() {
-            $.get('/confirm_restart', function(response) {
-                alert(response);
-                window.location.reload();
-            });
-        }
     </script>
 </body>
 </html>

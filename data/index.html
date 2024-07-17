@@ -26,6 +26,12 @@
             <hr class="sidebar-divider">
             <div class="sidebar-heading">Settings</div>
             <li class="nav-item">
+                <a class="nav-link" href="/ap_settings">
+                    <i class="fas fa-fw fa-wifi"></i>
+                    <span>Access Point Settings</span>
+                </a>
+            </li>
+            <li class="nav-item">
                 <a class="nav-link" href="/wifi_settings">
                     <i class="fas fa-fw fa-wifi"></i>
                     <span>WiFi Settings</span>
@@ -62,6 +68,9 @@
                     <div id="status">
                         <h5>WiFi Status: <span id="wifi_status">Loading...</span></h5>
                         <h5>MQTT Status: <span id="mqtt_status">Loading...</span></h5>
+                        <h5>Local IP: <span id="local_ip">Loading...</span></h5>
+                        <h5>AP IP: <span id="ap_ip">Loading...</span></h5>
+                        <h5>External IP: <span id="external_ip">Loading...</span></h5>
                     </div>
                 </div>
             </div>
@@ -76,6 +85,9 @@
                 $.get('/status', function(data) {
                     $('#wifi_status').text(data.wifi_status);
                     $('#mqtt_status').text(data.mqtt_status);
+                    $('#local_ip').text(data.local_ip);
+                    $('#ap_ip').text(data.ap_ip);
+                    $('#external_ip').text(data.external_ip);
                 });
             }
 
