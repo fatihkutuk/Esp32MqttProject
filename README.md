@@ -79,8 +79,6 @@ This project demonstrates how to use an ESP32 microcontroller to connect to an M
 
 ```
 Esp32MqttProject
-├── .theia
-│   ├── settings.json
 ├── data
 │   ├── index.html
 │   ├── ap_settings.html
