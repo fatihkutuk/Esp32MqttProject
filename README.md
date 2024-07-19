@@ -163,29 +163,32 @@ Esp32MqttProject
   void mqttCallback(char* topic, byte* payload, unsigned int length) {
       String message;
       for (unsigned int i = 0; i < length; i++) {
-          message += (char)payload[i];
+        message += (char)payload[i];
       }
       Serial.print("Message arrived [");
       Serial.print(topic);
       Serial.print("]: ");
       Serial.println(message);
-
+    
       if (String(topic) == controlTopic) {
-          DynamicJsonDocument doc(1024);
-          DeserializationError error = deserializeJson(doc, message);
-          if (error) {
-              Serial.print(F("deserializeJson() failed: "));
-              Serial.println(error.f_str());
-              return;
-          }
-
-          if (doc.containsKey("deviceled")) {
-              int state = doc["deviceled"];
-              digitalWrite(digitalOutput, state ? HIGH : LOW);
-              Serial.print("Device LED set to: ");
-              Serial.println(state);
-          }
-          // Add your custom code here to handle other keys
+        DynamicJsonDocument doc(1024);
+        DeserializationError error = deserializeJson(doc, message);
+        if (error) {
+          Serial.print(F("deserializeJson() failed: "));
+          Serial.println(error.f_str());
+          return;
+        }
+    
+        if (doc.containsKey("deviceled")) {
+          int state = doc["deviceled"];
+          digitalWrite(digitalOutput, state ? HIGH : LOW);
+          Serial.print("Device LED set to: ");
+          Serial.println(state);
+        }
+    
+        if (doc.containsKey("checkCommunication")) {
+          publishStatus(digitalRead(digitalInput1), digitalRead(digitalInput2), digitalRead(digitalOutput));
+        }
       }
   }
   ```
@@ -193,12 +196,11 @@ Esp32MqttProject
 - The `publishStatus` function sends status updates to the MQTT broker. This function publishes messages to the topic specified in the status topic field on the MQTT settings page:
 
   ```cpp
-  void publishStatus(int digitalInput1State, int digitalInput2State) {
-      String payload = "{"digital_input_1":" + String(digitalInput1State) + ","digital_input_2":" + String(digitalInput2State) +
-                       ","local_ip":"" + localIP + "","ap_ip":"" + apIPStr + "","external_ip":"" + externalIP + ""}";
+    void publishStatus(int digitalInput1State, int digitalInput2State, int digitalOutputState) {
+      String payload = "{\"digital_input_1\":" + String(digitalInput1State) + ",\"digital_input_2\":" + String(digitalInput2State) + ",\"deviceled\":" + String(digitalOutputState) + ",\"local_ip\":\"" + localIP + "\",\"ap_ip\":\"" + apIPStr + "\",\"external_ip\":\"" +        externalIP + "\",\"clientConnected\":" + String(WiFi.softAPgetStationNum() > 0 ? 1 : 0) + ",\"wifiConnected\":" + String(WiFi.status() == WL_CONNECTED ? 1 : 0) + ",\"internet\":" + String(externalIP.length() > 0 ? 1 : 0) + "}";
       client.publish(statusTopic, payload.c_str());
       Serial.println("Status published: " + payload);
-  }
+    }
   ```
 
 - The `mqttCallback` function listens for messages on the control topic defined in the MQTT settings page.
