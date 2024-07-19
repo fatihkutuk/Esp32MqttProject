@@ -120,7 +120,7 @@ Esp32MqttProject
 
 1. Connect the ESP32 to your computer using a USB cable.
 2. Select the correct board and port in the Arduino IDE:
-   - Go to `Tools` -> `Board` and select "ESP32 Dev Module".
+   - Go to `Tools` -> `Board` and select "ESP32 Dev Module, Node32s, DOIT ESP32 DEV KIT etc.".
    - Go to `Tools` -> `Port` and select the appropriate port.
 3. Click the "Upload" button to compile and upload the code to the ESP32.
 
