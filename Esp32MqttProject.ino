@@ -8,28 +8,29 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
-// Pin tanımlamaları
+// Pin definitions
 const int digitalInput1 = 12;
 const int digitalInput2 = 14;
-const int digitalOutput = 2; // Dahili LED
-const int resetPin = 0; // Ayarları sıfırlamak için kullanılacak pin
-const int resetDuration = 5000; // Ayarları sıfırlamak için pinin HIGH durumu bekleme süresi (ms)
+const int digitalOutput = 2; // Internal LED
+const int resetPin = 0; // Pin used to reset settings
+const int resetDuration = 5000; // Time (ms) to wait while the pin is HIGH to reset settings
 
+// WiFi and MQTT
 WiFiClientSecure espClientSecure;
 WiFiClient espClient;
 PubSubClient client(espClientSecure);
 AsyncWebServer server(80);
 DNSServer dnsServer;
 
-// Ayar değişkenleri
-char ssid[32] = "YOUR_SSID"; // WiFi SSID'nizi girin
-char password[64] = "YOUR_WIFI_PASSWORD"; // WiFi şifrenizi girin
+// Configuration variables
+char ssid[32] = "YOUR_SSID";
+char password[64] = "YOUR_WIFI_PASSWORD";
 char mqttServer[64] = "b37.mqtt.one";
 int mqttPort = 1883;
 char mqttUser[32] = "89fjvx7161";
 char mqttPass[32] = "358acfsvwy";
-char controlTopic[64] = "control_topic"; // Kontrol için kullanılacak topic'i girin
-char statusTopic[64] = "status_topic"; // Durum için kullanılacak topic'i girin
+char controlTopic[64] = "control_topic";
+char statusTopic[64] = "status_topic";
 char apSSID[32] = "ESP32-Config";
 char apPassword[64] = "admin123";
 char apIP[16] = "192.168.4.1";
@@ -45,9 +46,9 @@ String localIP = "";
 String externalIP = "";
 String apIPStr = "192.168.4.1";
 
-// Zamanlama değişkenleri
+// Timing variables
 unsigned long previousMillis = 0;
-const long interval = 10000; // 10 saniye
+const long interval = 10000; // 10 seconds
 
 static const char *default_ca PROGMEM = R"EOF(
 -----BEGIN CERTIFICATE-----
@@ -83,23 +84,27 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 -----END CERTIFICATE-----
 )EOF";
 
-// WiFi tarama sonuçları
+// WiFi scan results
 String wifiScanResult = "[]";
 
-// Fonksiyon prototipleri
+// Function prototypes
 void loadSettings();
 void saveSettings();
 void resetSettings();
 void reconnectMQTT();
 void mqttCallback(char* topic, byte* payload, unsigned int length);
 void handlePublish();
-void publishStatus(int digitalInput1State, int digitalInput2State);
+void publishStatus(int digitalInput1State, int digitalInput2State, int digitalOutputState);
 void WiFiScanTask(void * parameter);
 String getExternalIP();
 void printHeapStatus();
 void checkResetPin();
-void checkWiFiAndReconnect();
-void connectToWiFi();
+void startAP();
+void startWebServer();
+void wifiTask(void * parameter);
+String scanNetworks();
+
+TaskHandle_t wifiTaskHandle = NULL;
 
 void setup() {
     Serial.begin(115200);
@@ -114,9 +119,298 @@ void setup() {
     pinMode(digitalInput1, INPUT);
     pinMode(digitalInput2, INPUT);
     pinMode(digitalOutput, OUTPUT);
-    pinMode(resetPin, INPUT_PULLUP); // Reset pinini giriş olarak ayarla ve pull-up direnci etkinleştir
+    pinMode(resetPin, INPUT_PULLUP); // Set the reset pin as input with pull-up resistor
 
-    // AP modunda başlat
+    startAP(); // Start Access Point
+    startWebServer(); // Start Web server
+
+    client.setServer(mqttServer, mqttPort);
+    client.setCallback(mqttCallback);
+
+    // Start WiFi scan task
+    xTaskCreatePinnedToCore(
+        WiFiScanTask,     // Task function
+        "WiFiScanTask",   // Task name
+        4096,             // Stack size
+        NULL,             // Task parameter
+        1,                // Priority
+        NULL,             // Task handle
+        0                 // Core
+    );
+
+    // Start WiFi connection task
+    xTaskCreatePinnedToCore(
+        wifiTask,        // Task function
+        "wifiTask",      // Task name
+        4096,            // Stack size
+        NULL,            // Task parameter
+        1,               // Priority
+        &wifiTaskHandle, // Task handle
+        1                // Core
+    );
+}
+
+void loop() {
+    dnsServer.processNextRequest();
+
+    if (WiFi.status() == WL_CONNECTED) {
+        if (!client.connected()) {
+            reconnectMQTT();
+        }
+        client.loop();
+    }
+
+    handlePublish();
+    checkResetPin(); // Check the reset pin
+}
+
+void saveSettings() {
+    File file = SPIFFS.open("/config.ini", FILE_WRITE);
+    if (!file) {
+        Serial.println("Failed to open config file for writing");
+        return;
+    }
+    file.printf("ssid=%s\n", ssid);
+    file.printf("password=%s\n", password);
+    file.printf("mqtt_server=%s\n", mqttServer);
+    file.printf("mqtt_port=%d\n", mqttPort);
+    file.printf("mqtt_user=%s\n", mqttUser);
+    file.printf("mqtt_pass=%s\n", mqttPass);
+    file.printf("control_topic=%s\n", controlTopic);
+    file.printf("status_topic=%s\n", statusTopic);
+    file.printf("publish_on_change=%d\n", publishOnChange);
+    file.printf("publish_interval=%d\n", publishInterval);
+    file.printf("ap_ssid=%s\n", apSSID);
+    file.printf("ap_password=%s\n", apPassword);
+    file.printf("ap_ip=%s\n", apIP);
+    file.printf("ap_gateway=%s\n", apGateway);
+    file.printf("ap_subnet=%s\n", apSubnet);
+    file.printf("server_port=%d\n", serverPort);
+    file.printf("use_ssl=%d\n", useSSL);
+    
+    // Write certificate line by line
+    file.print("ca_cert=");
+    for (int i = 0; i < strlen(caCert); i++) {
+        if (caCert[i] == '\n') {
+            file.print("\\n");
+        } else {
+            file.print(caCert[i]);
+        }
+    }
+    file.println();
+
+    file.close();
+    Serial.println("Settings saved.");
+}
+
+void loadSettings() {
+    File file = SPIFFS.open("/config.ini", FILE_READ);
+    if (!file) {
+        Serial.println("Failed to open config file for reading");
+        return;
+    }
+
+    while (file.available()) {
+        String line = file.readStringUntil('\n');
+        line.trim();
+        int separatorIndex = line.indexOf('=');
+        if (separatorIndex == -1) continue;
+
+        String key = line.substring(0, separatorIndex);
+        String value = line.substring(separatorIndex + 1);
+
+        if (key == "ssid") value.toCharArray(ssid, sizeof(ssid));
+        else if (key == "password") value.toCharArray(password, sizeof(password));
+        else if (key == "mqtt_server") value.toCharArray(mqttServer, sizeof(mqttServer));
+        else if (key == "mqtt_port") mqttPort = value.toInt();
+        else if (key == "mqtt_user") value.toCharArray(mqttUser, sizeof(mqttUser));
+        else if (key == "mqtt_pass") value.toCharArray(mqttPass, sizeof(mqttPass));
+        else if (key == "control_topic") value.toCharArray(controlTopic, sizeof(controlTopic));
+        else if (key == "status_topic") value.toCharArray(statusTopic, sizeof(statusTopic));
+        else if (key == "publish_on_change") publishOnChange = value.toInt();
+        else if (key == "publish_interval") publishInterval = value.toInt();
+        else if (key == "ap_ssid") value.toCharArray(apSSID, sizeof(apSSID));
+        else if (key == "ap_password") value.toCharArray(apPassword, sizeof(apPassword));
+        else if (key == "ap_ip") value.toCharArray(apIP, sizeof(apIP));
+        else if (key == "ap_gateway") value.toCharArray(apGateway, sizeof(apGateway));
+        else if (key == "ap_subnet") value.toCharArray(apSubnet, sizeof(apSubnet));
+        else if (key == "server_port") serverPort = value.toInt();
+        else if (key == "use_ssl") useSSL = value.toInt();
+        else if (key == "ca_cert") {
+            caCert[0] = '\0'; // Clear the buffer
+            value.replace("\\n", "\n");
+            value.toCharArray(caCert, sizeof(caCert));
+        }
+    }
+    file.close();
+    Serial.println("Settings loaded:");
+    Serial.println("SSID: " + String(ssid));
+    Serial.println("Password: " + String(password));
+    Serial.println("MQTT Server: " + String(mqttServer));
+    Serial.println("MQTT Port: " + String(mqttPort));
+    Serial.println("MQTT User: " + String(mqttUser));
+    Serial.println("Control Topic: " + String(controlTopic));
+    Serial.println("Status Topic: " + String(statusTopic));
+    Serial.println("Publish on Change: " + String(publishOnChange));
+    Serial.println("Publish Interval: " + String(publishInterval));
+    Serial.println("AP SSID: " + String(apSSID));
+    Serial.println("AP Password: " + String(apPassword));
+    Serial.println("AP IP: " + String(apIP));
+    Serial.println("AP Gateway: " + String(apGateway));
+    Serial.println("AP Subnet: " + String(apSubnet));
+    Serial.println("Server Port: " + String(serverPort));
+    Serial.println("Use SSL: " + String(useSSL));
+    Serial.println("CA Cert: " + String(caCert));
+}
+
+void resetSettings() {
+    // Reset settings
+    strcpy(ssid, "");
+    strcpy(password, "");
+    strcpy(mqttServer, "");
+    mqttPort = 1883;
+    strcpy(mqttUser, "");
+    strcpy(mqttPass, "");
+    strcpy(controlTopic, "");
+    strcpy(statusTopic, "");
+    strcpy(apSSID, "ESP32-Config");
+    strcpy(apPassword, "admin123");
+    strcpy(apIP, "192.168.4.1");
+    strcpy(apGateway, "192.168.4.1");
+    strcpy(apSubnet, "255.255.255.0");
+    serverPort = 80;
+    publishOnChange = false;
+    publishInterval = 10000;
+    useSSL = false;
+    strcpy(caCert, "");
+    saveSettings();
+    ESP.restart(); // Restart the device
+}
+
+void reconnectMQTT() {
+    while (!client.connected()) {
+        Serial.print("Connecting to MQTT server ");
+        Serial.print(mqttServer);
+        Serial.print("...");
+        String clientId = "ESP32Client-";
+        clientId += String(random(0xffff), HEX);
+
+        // Determine if SSL will be used
+        if (useSSL) {
+            if (strlen(caCert) > 0) {
+                espClientSecure.setCACert(caCert);
+            } else {
+                espClientSecure.setCACert(default_ca);
+            }
+        }
+
+        if (client.connect(clientId.c_str(), mqttUser, mqttPass)) {
+            Serial.println("connected");
+            client.subscribe(controlTopic);
+            Serial.print("Subscribed to topic: ");
+            Serial.println(controlTopic);
+        } else {
+            Serial.print("failed, rc=");
+            Serial.print(client.state());
+            Serial.print(": ");
+            printState(client.state());
+            Serial.println(" try again in 5 seconds");
+            delay(5000);
+        }
+    }
+}
+
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+    String message;
+    for (unsigned int i = 0; i < length; i++) {
+        message += (char)payload[i];
+    }
+    Serial.print("Message arrived [");
+    Serial.print(topic);
+    Serial.print("]: ");
+    Serial.println(message);
+
+    if (String(topic) == controlTopic) {
+        DynamicJsonDocument doc(1024);
+        DeserializationError error = deserializeJson(doc, message);
+        if (error) {
+            Serial.print(F("deserializeJson() failed: "));
+            Serial.println(error.f_str());
+            return;
+        }
+
+        if (doc.containsKey("deviceled")) {
+            int state = doc["deviceled"];
+            digitalWrite(digitalOutput, state ? HIGH : LOW);
+            Serial.print("Device LED set to: ");
+            Serial.println(state);
+        }
+
+        if (doc.containsKey("checkCommunication")) {
+            publishStatus(digitalRead(digitalInput1), digitalRead(digitalInput2), digitalRead(digitalOutput));
+        }
+    }
+}
+
+void handlePublish() {
+    static int lastDigitalInput1State = LOW;
+    static int lastDigitalInput2State = LOW;
+    static int lastDigitalOutputState = LOW;
+    int currentDigitalInput1State = digitalRead(digitalInput1);
+    int currentDigitalInput2State = digitalRead(digitalInput2);
+    int currentDigitalOutputState = digitalRead(digitalOutput);
+    bool dataChanged = false;
+
+    if (currentDigitalInput1State != lastDigitalInput1State) {
+        lastDigitalInput1State = currentDigitalInput1State;
+        dataChanged = true;
+    }
+
+    if (currentDigitalInput2State != lastDigitalInput2State) {
+        lastDigitalInput2State = currentDigitalInput2State;
+        dataChanged = true;
+    }
+
+    if (currentDigitalOutputState != lastDigitalOutputState) {
+        lastDigitalOutputState = currentDigitalOutputState;
+        dataChanged = true;
+    }
+
+    if (publishOnChange && dataChanged) {
+        publishStatus(currentDigitalInput1State, currentDigitalInput2State, currentDigitalOutputState);
+    } else if (!publishOnChange && (millis() - lastPublishTime >= publishInterval)) {
+        publishStatus(currentDigitalInput1State, currentDigitalInput2State, currentDigitalOutputState);
+        lastPublishTime = millis();
+    }
+}
+
+void publishStatus(int digitalInput1State, int digitalInput2State, int digitalOutputState) {
+    String payload = "{\"digital_input_1\":" + String(digitalInput1State) + ",\"digital_input_2\":" + String(digitalInput2State) +
+                     ",\"deviceled\":" + String(digitalOutputState) + ",\"local_ip\":\"" + localIP + "\",\"ap_ip\":\"" + apIPStr + 
+                     "\",\"external_ip\":\"" + externalIP + "\",\"clientConnected\":" + String(WiFi.softAPgetStationNum() > 0 ? 1 : 0) +
+                     ",\"wifiConnected\":" + String(WiFi.status() == WL_CONNECTED ? 1 : 0) + ",\"internet\":" + String(externalIP.length() > 0 ? 1 : 0) + "}";
+    client.publish(statusTopic, payload.c_str());
+    Serial.println("Status published: " + payload);
+}
+
+void printState(int state) {
+    switch (state) {
+        case -4: Serial.println("MQTT_CONNECTION_TIMEOUT"); break;
+        case -3: Serial.println("MQTT_CONNECTION_LOST"); break;
+        case -2: Serial.println("MQTT_CONNECT_FAILED"); break;
+        case -1: Serial.println("MQTT_DISCONNECTED"); break;
+        case 0: Serial.println("MQTT_CONNECTED"); break;
+        case 1: Serial.println("MQTT_CONNECT_BAD_PROTOCOL"); break;
+        case 2: Serial.println("MQTT_CONNECT_BAD_CLIENT_ID"); break;
+        case 3: Serial.println("MQTT_CONNECT_UNAVAILABLE"); break;
+        case 4: Serial.println("MQTT_CONNECT_BAD_CREDENTIALS"); break;
+        case 5: Serial.println("MQTT_CONNECT_UNAUTHORIZED"); break;
+        default: Serial.println("Unknown error"); break;
+    }
+}
+
+void startAP() {
+    // Start AP mode
     WiFi.mode(WIFI_AP_STA);
     IPAddress apIPAddr, apGatewayAddr, apSubnetAddr;
     if (apIPAddr.fromString(apIP) && apGatewayAddr.fromString(apGateway) && apSubnetAddr.fromString(apSubnet)) {
@@ -137,22 +431,10 @@ void setup() {
 
     dnsServer.start(53, "*", IPAddress(192, 168, 4, 1));
     Serial.println("DNS server started");
+}
 
-    client.setServer(mqttServer, mqttPort);
-    client.setCallback(mqttCallback);
-
-    // WiFi tarama görevini başlat
-    xTaskCreatePinnedToCore(
-        WiFiScanTask,     // Görev işlevi
-        "WiFiScanTask",   // Görev adı
-        4096,             // Yığın boyutu
-        NULL,             // Görev parametresi
-        1,                // Öncelik
-        NULL,             // Görev tutucu
-        0                 // Çekirdek
-    );
-
-    // Web sunucusunu başlat
+void startWebServer() {
+    // Start Web server
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(SPIFFS, "/index.html", String(), false);
     });
@@ -169,7 +451,7 @@ void setup() {
         request->send(SPIFFS, "/mqtt_settings.html", String(), false);
     });
 
-    // Bootstrap ve jQuery dosyaları için sunucu yolları
+    // Paths for Bootstrap and jQuery files
     server.on("/css/sb-admin-2.min.css", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(SPIFFS, "/css/sb-admin-2.min.css", "text/css");
     });
@@ -204,7 +486,6 @@ void setup() {
             while (WiFi.status() != WL_CONNECTED && attempts < 20) {
                 delay(500);
                 Serial.print(".");
-                attempts++;
             }
             if (WiFi.status() == WL_CONNECTED) {
                 request->send(200, "text/plain", "Connected to " + String(ssid));
@@ -273,7 +554,7 @@ void setup() {
         ip.toCharArray(apIP, sizeof(apIP));
         gateway.toCharArray(apGateway, sizeof(apGateway));
         subnet.toCharArray(apSubnet, sizeof(apSubnet));
-        serverPort = port.toInt(); // Server portunu ayarla
+        serverPort = port.toInt(); // Set server port
 
         if (strlen(apSSID) > 0) {
             saveSettings();
@@ -290,8 +571,8 @@ void setup() {
     });
 
     server.on("/get_mqtt_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
-        loadSettings(); // En son ayarları yükle
-        DynamicJsonDocument json(2048); // JSON belge oluştur
+        loadSettings(); // Load latest settings
+        DynamicJsonDocument json(2048); // Create JSON document
         json["mqtt_server"] = String(mqttServer);
         json["mqtt_port"] = mqttPort;
         json["mqtt_user"] = String(mqttUser);
@@ -304,12 +585,12 @@ void setup() {
         json["ca_cert"] = String(caCert);
 
         String jsonString;
-        serializeJson(json, jsonString); // JSON belgeyi dizeye serileştir
-        request->send(200, "application/json", jsonString); // JSON dizesini gönder
+        serializeJson(json, jsonString); // Serialize JSON document to string
+        request->send(200, "application/json", jsonString); // Send JSON string
     });
 
     server.on("/get_ap_settings", HTTP_GET, [](AsyncWebServerRequest *request) {
-        loadSettings(); // En son ayarları yükle
+        loadSettings(); // Load latest settings
         String json = "{\"ap_ssid\":\"" + String(apSSID) + "\",\"ap_password\":\"" + String(apPassword) + 
                       "\",\"ap_ip\":\"" + String(apIP) + "\",\"ap_gateway\":\"" + String(apGateway) + 
                       "\",\"ap_subnet\":\"" + String(apSubnet) + "\",\"server_port\":\"" + String(serverPort) + "\"}";
@@ -338,282 +619,11 @@ void setup() {
     Serial.println("Web server started.");
 }
 
-void loop() {
-    dnsServer.processNextRequest();
-
-    unsigned long currentMillis = millis();
-    if (currentMillis - previousMillis >= interval) {
-        previousMillis = currentMillis;
-        checkWiFiAndReconnect();
-    }
-
-    if (WiFi.status() == WL_CONNECTED) {
-        if (!client.connected()) {
-            reconnectMQTT();
-        }
-        client.loop();
-    }
-
-    handlePublish();
-    checkResetPin(); // Reset pinini kontrol et
-}
-
-void saveSettings() {
-    File file = SPIFFS.open("/config.ini", FILE_WRITE);
-    if (!file) {
-        Serial.println("Failed to open config file for writing");
-        return;
-    }
-    file.printf("ssid=%s\n", ssid);
-    file.printf("password=%s\n", password);
-    file.printf("mqtt_server=%s\n", mqttServer);
-    file.printf("mqtt_port=%d\n", mqttPort);
-    file.printf("mqtt_user=%s\n", mqttUser);
-    file.printf("mqtt_pass=%s\n", mqttPass);
-    file.printf("control_topic=%s\n", controlTopic);
-    file.printf("status_topic=%s\n", statusTopic);
-    file.printf("publish_on_change=%d\n", publishOnChange);
-    file.printf("publish_interval=%d\n", publishInterval);
-    file.printf("ap_ssid=%s\n", apSSID);
-    file.printf("ap_password=%s\n", apPassword);
-    file.printf("ap_ip=%s\n", apIP);
-    file.printf("ap_gateway=%s\n", apGateway);
-    file.printf("ap_subnet=%s\n", apSubnet);
-    file.printf("server_port=%d\n", serverPort);
-    file.printf("use_ssl=%d\n", useSSL);
-    
-    // Sertifikayı satır satır yaz
-    file.print("ca_cert=");
-    for (int i = 0; i < strlen(caCert); i++) {
-        if (caCert[i] == '\n') {
-            file.print("\\n");
-        } else {
-            file.print(caCert[i]);
-        }
-    }
-    file.println();
-
-    file.close();
-    Serial.println("Settings saved.");
-}
-
-void loadSettings() {
-    File file = SPIFFS.open("/config.ini", FILE_READ);
-    if (!file) {
-        Serial.println("Failed to open config file for reading");
-        return;
-    }
-
-    while (file.available()) {
-        String line = file.readStringUntil('\n');
-        line.trim();
-        int separatorIndex = line.indexOf('=');
-        if (separatorIndex == -1) continue;
-
-        String key = line.substring(0, separatorIndex);
-        String value = line.substring(separatorIndex + 1);
-
-        if (key == "ssid") value.toCharArray(ssid, sizeof(ssid));
-        else if (key == "password") value.toCharArray(password, sizeof(password));
-        else if (key == "mqtt_server") value.toCharArray(mqttServer, sizeof(mqttServer));
-        else if (key == "mqtt_port") mqttPort = value.toInt();
-        else if (key == "mqtt_user") value.toCharArray(mqttUser, sizeof(mqttUser));
-        else if (key == "mqtt_pass") value.toCharArray(mqttPass, sizeof(mqttPass));
-        else if (key == "control_topic") value.toCharArray(controlTopic, sizeof(controlTopic));
-        else if (key == "status_topic") value.toCharArray(statusTopic, sizeof(statusTopic));
-        else if (key == "publish_on_change") publishOnChange = value.toInt();
-        else if (key == "publish_interval") publishInterval = value.toInt();
-        else if (key == "ap_ssid") value.toCharArray(apSSID, sizeof(apSSID));
-        else if (key == "ap_password") value.toCharArray(apPassword, sizeof(apPassword));
-        else if (key == "ap_ip") value.toCharArray(apIP, sizeof(apIP));
-        else if (key == "ap_gateway") value.toCharArray(apGateway, sizeof(apGateway));
-        else if (key == "ap_subnet") value.toCharArray(apSubnet, sizeof(apSubnet));
-        else if (key == "server_port") serverPort = value.toInt();
-        else if (key == "use_ssl") useSSL = value.toInt();
-        else if (key == "ca_cert") {
-            caCert[0] = '\0'; // Boşalt
-            value.replace("\\n", "\n");
-            value.toCharArray(caCert, sizeof(caCert));
-        }
-    }
-    file.close();
-    Serial.println("Settings loaded:");
-    Serial.println("SSID: " + String(ssid));
-    Serial.println("Password: " + String(password));
-    Serial.println("MQTT Server: " + String(mqttServer));
-    Serial.println("MQTT Port: " + String(mqttPort));
-    Serial.println("MQTT User: " + String(mqttUser));
-    Serial.println("Control Topic: " + String(controlTopic));
-    Serial.println("Status Topic: " + String(statusTopic));
-    Serial.println("Publish on Change: " + String(publishOnChange));
-    Serial.println("Publish Interval: " + String(publishInterval));
-    Serial.println("AP SSID: " + String(apSSID));
-    Serial.println("AP Password: " + String(apPassword));
-    Serial.println("AP IP: " + String(apIP));
-    Serial.println("AP Gateway: " + String(apGateway));
-    Serial.println("AP Subnet: " + String(apSubnet));
-    Serial.println("Server Port: " + String(serverPort));
-    Serial.println("Use SSL: " + String(useSSL));
-    Serial.println("CA Cert: " + String(caCert));
-}
-
-void resetSettings() {
-    // Ayarları sıfırla
-    strcpy(ssid, "");
-    strcpy(password, "");
-    strcpy(mqttServer, "");
-    mqttPort = 1883;
-    strcpy(mqttUser, "");
-    strcpy(mqttPass, "");
-    strcpy(controlTopic, "");
-    strcpy(statusTopic, "");
-    strcpy(apSSID, "ESP32-Config");
-    strcpy(apPassword, "admin123");
-    strcpy(apIP, "192.168.4.1");
-    strcpy(apGateway, "192.168.4.1");
-    strcpy(apSubnet, "255.255.255.0");
-    serverPort = 80;
-    publishOnChange = false;
-    publishInterval = 10000;
-    useSSL = false;
-    strcpy(caCert, "");
-    saveSettings();
-    ESP.restart(); // Cihazı yeniden başlat
-}
-
-void reconnectMQTT() {
-    while (!client.connected()) {
-        Serial.print("Connecting to MQTT server ");
-        Serial.print(mqttServer);
-        Serial.print("...");
-        String clientId = "ESP32Client-";
-        clientId += String(random(0xffff), HEX);
-
-        // SSL kullanılıp kullanılmayacağını belirleyen kısım
-        if (useSSL) {
-            if (strlen(caCert) > 0) {
-                espClientSecure.setCACert(caCert);
-            } else {
-                espClientSecure.setCACert(default_ca);
-            }
-        }
-
-        if (client.connect(clientId.c_str(), mqttUser, mqttPass)) {
-            Serial.println("connected");
-            client.subscribe(controlTopic);
-            Serial.print("Subscribed to topic: ");
-            Serial.println(controlTopic);
-        } else {
-            Serial.print("failed, rc=");
-            Serial.print(client.state());
-            Serial.print(": ");
-            printState(client.state());
-            Serial.println(" try again in 5 seconds");
-            delay(5000);
-        }
-    }
-}
-
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
-    String message;
-    for (unsigned int i = 0; i < length; i++) {
-        message += (char)payload[i];
-    }
-    Serial.print("Message arrived [");
-    Serial.print(topic);
-    Serial.print("]: ");
-    Serial.println(message);
-
-    if (String(topic) == controlTopic) {
-        DynamicJsonDocument doc(1024);
-        DeserializationError error = deserializeJson(doc, message);
-        if (error) {
-            Serial.print(F("deserializeJson() failed: "));
-            Serial.println(error.f_str());
-            return;
-        }
-
-        if (doc.containsKey("deviceled")) {
-            int state = doc["deviceled"];
-            digitalWrite(digitalOutput, state ? HIGH : LOW);
-            Serial.print("Device LED set to: ");
-            Serial.println(state);
-        }
-    }
-}
-
-void handlePublish() {
-    static int lastDigitalInput1State = LOW;
-    static int lastDigitalInput2State = LOW;
-    int currentDigitalInput1State = digitalRead(digitalInput1);
-    int currentDigitalInput2State = digitalRead(digitalInput2);
-    bool dataChanged = false;
-
-    if (currentDigitalInput1State != lastDigitalInput1State) {
-        lastDigitalInput1State = currentDigitalInput1State;
-        dataChanged = true;
-    }
-
-    if (currentDigitalInput2State != lastDigitalInput2State) {
-        lastDigitalInput2State = currentDigitalInput2State;
-        dataChanged = true;
-    }
-
-    if (publishOnChange && dataChanged) {
-        publishStatus(currentDigitalInput1State, currentDigitalInput2State);
-    } else if (!publishOnChange && (millis() - lastPublishTime >= publishInterval)) {
-        publishStatus(currentDigitalInput1State, currentDigitalInput2State);
-        lastPublishTime = millis();
-    }
-}
-
-void publishStatus(int digitalInput1State, int digitalInput2State) {
-    String payload = "{\"digital_input_1\":" + String(digitalInput1State) + ",\"digital_input_2\":" + String(digitalInput2State) +
-                     ",\"local_ip\":\"" + localIP + "\",\"ap_ip\":\"" + apIPStr + "\",\"external_ip\":\"" + externalIP + "\"}";
-    client.publish(statusTopic, payload.c_str());
-    Serial.println("Status published: " + payload);
-}
-
-void printState(int state) {
-    switch (state) {
-        case -4: Serial.println("MQTT_CONNECTION_TIMEOUT"); break;
-        case -3: Serial.println("MQTT_CONNECTION_LOST"); break;
-        case -2: Serial.println("MQTT_CONNECT_FAILED"); break;
-        case -1: Serial.println("MQTT_DISCONNECTED"); break;
-        case 0: Serial.println("MQTT_CONNECTED"); break;
-        case 1: Serial.println("MQTT_CONNECT_BAD_PROTOCOL"); break;
-        case 2: Serial.println("MQTT_CONNECT_BAD_CLIENT_ID"); break;
-        case 3: Serial.println("MQTT_CONNECT_UNAVAILABLE"); break;
-        case 4: Serial.println("MQTT_CONNECT_BAD_CREDENTIALS"); break;
-        case 5: Serial.println("MQTT_CONNECT_UNAUTHORIZED"); break;
-        default: Serial.println("Unknown error"); break;
-    }
-}
-
-void checkWiFiAndReconnect() {
-    if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("WiFi not connected, attempting to reconnect...");
-        connectToWiFi();
-    }
-}
-
-void connectToWiFi() {
-    if (strlen(ssid) > 0) {
-        WiFi.begin(ssid, password);
-        Serial.println("Connecting to WiFi...");
-        int attempts = 0;
-        while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-            delay(500);
-            Serial.print(".");
-            attempts++;
-        }
-        if (WiFi.status() == WL_CONNECTED) {
-            Serial.println("Connected to WiFi");
-            localIP = WiFi.localIP().toString();
-            externalIP = getExternalIP();
-        } else {
-            Serial.println("Failed to connect to WiFi");
-        }
+void WiFiScanTask(void * parameter) {
+    while (true) {
+        wifiScanResult = scanNetworks();
+        Serial.println("WiFi scan completed");
+        delay(60000); // Wait 1 minute
     }
 }
 
@@ -631,17 +641,9 @@ String scanNetworks() {
     return json;
 }
 
-void WiFiScanTask(void * parameter) {
-    while (true) {
-        wifiScanResult = scanNetworks();
-        Serial.println("WiFi scan completed");
-        delay(60000); // 1 dakika bekle
-    }
-}
-
 String getExternalIP() {
     HTTPClient http;
-    http.begin("http://api.ipify.org"); // IP'yi almak için basit bir API
+    http.begin("http://api.ipify.org"); // Simple API to get IP
     int httpCode = http.GET();
     String payload;
     if (httpCode > 0) {
@@ -670,4 +672,31 @@ void printHeapStatus() {
     Serial.println(ESP.getFreeHeap());
     Serial.print("Max alloc heap: ");
     Serial.println(ESP.getMaxAllocHeap());
+}
+
+void wifiTask(void * parameter) {
+    for(;;) {
+        if (WiFi.status() != WL_CONNECTED) {
+            Serial.println("WiFi not connected, attempting to reconnect...");
+            if (strlen(ssid) > 0) {
+                WiFi.begin(ssid, password);
+                int attempts = 0;
+                while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+                    delay(500);
+                    Serial.print(".");
+                    attempts++;
+                }
+                if (WiFi.status() == WL_CONNECTED) {
+                    Serial.println("Connected to WiFi");
+                    localIP = WiFi.localIP().toString();
+                    externalIP = getExternalIP();
+                } else {
+                    Serial.println("Failed to connect to WiFi");
+                }
+            }
+        }else{
+          Serial.println("Sta Connected");
+        }
+        delay(10000); // Wait 10 seconds
+    }
 }
